@@ -34,7 +34,7 @@ class Controller_Users extends Controller_Rest
             //Validar si hay usuarios
             $users = Model_Users::find('all');
 
-            if (! empty($users)) {
+            if (empty($users)) {
                 $input = $_POST;
                 $user = new Model_Users();
                 $user->username = 'admin';
@@ -46,18 +46,104 @@ class Controller_Users extends Controller_Rest
                 $user->id_rol = 1;
                 $user->save();
                 $json = $this->response(array(
-                   'code' => 202,
-                   'message' => 'usuario creado',
+                   'code' => 200,
+                   'message' => 'Administrador creado',
                     'data' => null
                 ));
 
             return $json;
+            }
+            else
+            {
+                $json = $this->response(array(
+                   'code' => 400,
+                   'message' => 'La API ya está configurada',
+                    'data' => null
+                ));
             }
         } 
         catch (Exception $e) 
         {
             $json = $this->response(array(
                 'code' => 502,
+                'message' => $e->getMessage(),
+                'data' => null
+            ));
+
+            return $json;
+        }
+    }
+
+    public function get_loginWeb()
+    {
+        try {
+            if ( ! isset($_GET['username']) or
+                 ! isset($_GET['password']) or
+                 $_GET['username'] == "" or
+                 $_GET['password'] == "") 
+            {
+                $json = $this->response(array(
+                    'code' => 402,
+                    'message' => 'parametros incorrectos/Los campos no pueden estar vacios',
+                    'data' => null
+                ));
+
+                return $json;
+            }
+
+            $users = Model_users::find('first', array(
+                'where' => array(
+                    array('username', $_GET['username']),
+                    array('password', $_GET['password'])
+                ),
+            ));
+            
+            //Validación usuario
+            if (!empty($users)) {
+                if($users->id_rol == 1){
+                   //Generar token
+                    $token = array(
+                        'id'  => $users['id'],
+                        'username' => $_GET['username'],
+                        'password' => $_GET['password'],
+                    );
+                
+                $jwt = JWT::encode($token, $this->key);
+
+                $json = $this->response(array(
+                        'code' => 201,
+                        'message' => 'usuario logeado',
+                        'data' => array(
+                            'token' => $jwt,
+                            'username' => $token['username']   
+                        )
+                    ));
+                return $json;
+                }
+                else
+                {
+                    $json = $this->response(array(
+                        'code' => 401,
+                        'message' => 'Acceso denegado. Debes acceder con un usuario administrador',
+                        'data' => null  
+                    ));
+                return $json;
+                }
+            }
+            else
+            {
+                $json = $this->response(array(
+                    'code' => 401,
+                    'message' => 'El usuario no existe o contraseña incorrecta',
+                    'data' => null
+                ));
+               return $json;
+            }
+        }
+        catch (Exception $e) 
+        {
+            $json = $this->response(array(
+                'code' => 501,
                 'message' => $e->getMessage(),
                 'data' => null
             ));
@@ -95,11 +181,11 @@ class Controller_Users extends Controller_Rest
                //Generar token
                 $token = array(
                     'id'  => $users['id'],
-                    'username' => $_GET['username'],
-                    'password' => $_GET['password'],
-                    'id_device' => $_GET['id_device'],
-                    'coordenada_x' => $_GET['coordenada_x'],
-                    'coordenada_y' => $_GET['coordenada_y']
+                    'username' => $users['username'],
+                    'password' => $users['password'],
+                    'id_device' => $users['id_device'],
+                    'coordenada_x' => $users['coordenada_x'],
+                    'coordenada_y' => $users['coordenada_y']
                 );
             
             $jwt = JWT::encode($token, $this->key);
@@ -139,6 +225,23 @@ class Controller_Users extends Controller_Rest
     public function post_create()
     {
         try {
+            //Validar api configurada
+            $admin = Model_users::find('first', array(
+                'where' => array(
+                    array('username', 'admin'),
+                ),
+            ));
+            if(empty($admin))
+            {
+                $json = $this->response(array(
+                    'code' => 400,
+                    'message' => 'La API no está configurada',
+                    'data' => null
+                ));
+
+                return $json;
+            }
+
             //Validar campos rellenos y nombre correcto
             if ( ! isset($_POST['username']) or
                  ! isset($_POST['email']) or
@@ -238,6 +341,48 @@ class Controller_Users extends Controller_Rest
         }
     }
 
+    public function get_users()
+    {
+        try {
+            $token = apache_request_headers()['Authorization'];
+
+            if ($this->authorization($token) == true){
+               
+                $decoded = JWT::decode($token, $this->key, array('HS256'));
+                $id = $decoded->id;
+
+                $users = Model_Users::find('all');
+
+                $json = $this->response(array(
+                    'code' => 200,
+                    'message' => 'Usuarios mostrados',
+                    'data' => $users
+                ));
+
+                return $json;
+
+            }
+            else
+            {
+                $json = $this->response(array(
+                    'code' => 400,
+                    'message' => 'Token incorrecto, no tienes permiso'
+                ));
+
+                return $json;
+            }
+        } 
+        catch (Exception $e) 
+        {
+            $json = $this->response(array(
+                'code' => 500,
+                'message' => $e->getMessage(),
+            ));
+
+            return $json;
+        }
+    }
+
     public function post_delete()
     {
         try
@@ -250,13 +395,26 @@ class Controller_Users extends Controller_Rest
                 $id = $decoded->id;
                 $user = Model_Users::find($id);
 
-                $user->delete();
-                $json = $this->response(array(
-                    'code' => 201,
-                    'message' => 'usuario borrado',
-                    'data' => null
-                ));
-                return $json;
+                if($user->id_rol != 1)
+                {
+                    $user->delete();
+                    $json = $this->response(array(
+                        'code' => 201,
+                        'message' => 'usuario borrado',
+                        'data' => null
+                    ));
+                    return $json;
+                }
+                else
+                {
+                    $json = $this->response(array(
+                        'code' => 400,
+                        'message' => 'No puede borrarse el usuario administrador',
+                        'data' => null
+                    ));
+                    return $json;
+                }
+                
             
             }
             else
@@ -382,5 +540,145 @@ class Controller_Users extends Controller_Rest
 
             return $json;
         }
+    }
+
+    public function post_modify()
+    {
+        try
+        {
+            $token = apache_request_headers()['Authorization'];
+
+            if ($this->authorization($token) == true){
+               
+                $decoded = JWT::decode($token, $this->key, array('HS256'));
+                $id = $decoded->id;
+                $user = Model_Users::find($id);
+
+                if (!empty($_POST['foto_perfil']) and !empty($_POST['password']) or
+                    !empty($_POST['foto_perfil']) and isset($_POST['password']) or
+                    isset($_POST['foto_perfil']) and !empty($_POST['password']))
+                {
+                    //Guardar foto
+                    if (isset($_POST['foto_perfil']) && !empty($_POST['foto_perfil']))
+                    {
+                        $user->foto_perfil = $_POST['foto_perfil'];
+                        $user->save();
+                    }
+                    //Guardar contraseña
+                    if (isset($_POST['password']) && !empty($_POST['password']))
+                    {
+                        $user->password = $_POST['password'];
+                        $user->save();
+                    }
+                    
+
+                    $json = $this->response(array(
+                    'code' => 200,
+                    'message' => 'Usuario modificado correctamente',
+                    'data' => $user
+                    ));
+
+                    return $json;
+                }
+                else
+                {
+                $json = $this->response(array(
+                    'code' => 400,
+                    'message' => 'Todos los parametros vacios',
+                    'data' => $user
+                ));
+
+                return $json;
+                }
+            }
+            else
+            {
+                $json = $this->response(array(
+                    'code' => 401,
+                    'message' => 'Token incorrecto, no tienes permiso',
+                    'data' => null
+                ));
+
+                return $json;
+            }
+        } 
+        catch (Exception $e) 
+        {
+            $json = $this->response(array(
+                'code' => 501,
+                'message' => $e->getMessage(),
+                'data' => null
+            ));
+
+            return $json;
+        }
+    }
+
+    public function get_getNearUsers()
+    {
+     try
+        {
+            $token = apache_request_headers()['Authorization'];
+
+            if ($this->authorization($token) == true){
+               
+                $decoded = JWT::decode($token, $this->key, array('HS256'));
+                $id = $decoded->id;
+                
+                $users = Model_Users::find('all', array(
+                'where' => array(
+                    array('coordenada_x', $decoded->coordenada_x),
+                    array('coordenada_y', $decoded->coordenada_y),
+                    //array('id', $id),
+                ),
+            ));
+                if(!empty($users))
+                {
+                    $nearUsers;
+
+                    foreach ($users as $key => $value) {
+                        if($id != $value->id)
+                        {
+                            $nearUsers[] = array("username" => $value->username);
+                        }
+                    }
+                    $json = $this->response(array(
+                        'code' => 200,
+                        'message' => 'usuarios encontrados:',
+                        'data' => $nearUsers
+                    ));
+                    return $json;
+                }
+                else
+                {
+                    $json = $this->response(array(
+                        'code' => 400,
+                        'message' => 'No hay usuarios cercanos',
+                        'data' => $decoded->coordenada_x
+                    ));
+                    return $json;
+                }
+            }
+            else
+            {
+                $json = $this->response(array(
+                    'code' => 400,
+                    'message' => 'Token incorrecto, no tienes permiso',
+                    'data' => null
+                ));
+
+                return $json;
+            }
+        } 
+        catch (Exception $e) 
+        {
+            $json = $this->response(array(
+                'code' => 501,
+                'message' => $e->getMessage(),
+                'data' => null
+            ));
+
+            return $json;
+        }    
     }
 }
